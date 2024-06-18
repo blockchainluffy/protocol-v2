@@ -32,6 +32,7 @@ import {
   authorizeWETHGateway,
   deployATokenImplementations,
   deployAaveOracle,
+  deployMockIthacaFeed,
 } from '../../helpers/contracts-deployments';
 import { Signer } from 'ethers';
 import { TokenContractId, eContractid, tEthereumAddress, AavePools } from '../../helpers/types';
@@ -153,6 +154,7 @@ const buildTestEnv = async (deployer: Signer, secondaryWallet: Signer) => {
   await setInitialAssetPricesInOracle(
     ALL_ASSETS_INITIAL_PRICES,
     {
+      ITH: mockTokens.ITH.address,
       WETH: mockTokens.WETH.address,
       DAI: mockTokens.DAI.address,
       TUSD: mockTokens.TUSD.address,
@@ -296,6 +298,8 @@ const buildTestEnv = async (deployer: Signer, secondaryWallet: Signer) => {
   await deployUniswapLiquiditySwapAdapter(adapterParams);
   await deployUniswapRepayAdapter(adapterParams);
   await deployFlashLiquidationAdapter(adapterParams);
+
+  await deployMockIthacaFeed();
 
   const augustus = await deployMockParaSwapAugustus();
 

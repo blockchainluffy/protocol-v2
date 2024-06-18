@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: agpl-3.0
 pragma solidity 0.6.12;
 
-import {Ownable} from '../../dependencies/openzeppelin/contracts/Ownable.sol';
+import {Ownable} from "../../dependencies/openzeppelin/contracts/Ownable.sol";
 
 // Prettier ignore to prevent buidler flatter bug
 // prettier-ignore
 import {InitializableImmutableAdminUpgradeabilityProxy} from '../libraries/aave-upgradeability/InitializableImmutableAdminUpgradeabilityProxy.sol';
 
-import {ILendingPoolAddressesProvider} from '../../interfaces/ILendingPoolAddressesProvider.sol';
+import {ILendingPoolAddressesProvider} from "../../interfaces/ILendingPoolAddressesProvider.sol";
 
 /**
  * @title LendingPoolAddressesProvider contract
@@ -20,13 +20,15 @@ contract LendingPoolAddressesProvider is Ownable, ILendingPoolAddressesProvider 
   string private _marketId;
   mapping(bytes32 => address) private _addresses;
 
-  bytes32 private constant LENDING_POOL = 'LENDING_POOL';
-  bytes32 private constant LENDING_POOL_CONFIGURATOR = 'LENDING_POOL_CONFIGURATOR';
-  bytes32 private constant POOL_ADMIN = 'POOL_ADMIN';
-  bytes32 private constant EMERGENCY_ADMIN = 'EMERGENCY_ADMIN';
-  bytes32 private constant LENDING_POOL_COLLATERAL_MANAGER = 'COLLATERAL_MANAGER';
-  bytes32 private constant PRICE_ORACLE = 'PRICE_ORACLE';
-  bytes32 private constant LENDING_RATE_ORACLE = 'LENDING_RATE_ORACLE';
+  bytes32 private constant LENDING_POOL = "LENDING_POOL";
+  bytes32 private constant LENDING_POOL_CONFIGURATOR = "LENDING_POOL_CONFIGURATOR";
+  bytes32 private constant POOL_ADMIN = "POOL_ADMIN";
+  bytes32 private constant EMERGENCY_ADMIN = "EMERGENCY_ADMIN";
+  bytes32 private constant LENDING_POOL_COLLATERAL_MANAGER = "COLLATERAL_MANAGER";
+  bytes32 private constant PRICE_ORACLE = "PRICE_ORACLE";
+  bytes32 private constant LENDING_RATE_ORACLE = "LENDING_RATE_ORACLE";
+  bytes32 private constant ITHACA_FEED_ORACLE = "ITHACA_FEED_ORACLE";
+  bytes32 private constant ITHACA_RECEIVER_ACCOUNT = "ITHACA_RECEIVER_ACCOUNT";
 
   constructor(string memory marketId) public {
     _setMarketId(marketId);
@@ -57,11 +59,10 @@ contract LendingPoolAddressesProvider is Ownable, ILendingPoolAddressesProvider 
    * @param id The id
    * @param implementationAddress The address of the new implementation
    */
-  function setAddressAsProxy(bytes32 id, address implementationAddress)
-    external
-    override
-    onlyOwner
-  {
+  function setAddressAsProxy(
+    bytes32 id,
+    address implementationAddress
+  ) external override onlyOwner {
     _updateImpl(id, implementationAddress);
     emit AddressSet(id, implementationAddress, true);
   }
@@ -182,6 +183,24 @@ contract LendingPoolAddressesProvider is Ownable, ILendingPoolAddressesProvider 
     emit LendingRateOracleUpdated(lendingRateOracle);
   }
 
+  function getIthacaFeedOracle() external view override returns (address) {
+    return getAddress(ITHACA_FEED_ORACLE);
+  }
+
+  function getReceiverAccount() external view override returns (address) {
+    return getAddress(ITHACA_RECEIVER_ACCOUNT);
+  }
+
+  function setReceiverAccount(address receiver) external override onlyOwner {
+    _addresses[ITHACA_RECEIVER_ACCOUNT] = receiver;
+    emit ReceiverUpdated(receiver);
+  }
+
+  function setIthacaFeedOracle(address ithacaFeed) external override onlyOwner {
+    _addresses[ITHACA_FEED_ORACLE] = ithacaFeed;
+    emit IthacaFeedOracleUpdated(ithacaFeed);
+  }
+
   /**
    * @dev Internal function to update the implementation of a specific proxied component of the protocol
    * - If there is no proxy registered in the given `id`, it creates the proxy setting `newAdress`
@@ -194,9 +213,10 @@ contract LendingPoolAddressesProvider is Ownable, ILendingPoolAddressesProvider 
   function _updateImpl(bytes32 id, address newAddress) internal {
     address payable proxyAddress = payable(_addresses[id]);
 
-    InitializableImmutableAdminUpgradeabilityProxy proxy =
-      InitializableImmutableAdminUpgradeabilityProxy(proxyAddress);
-    bytes memory params = abi.encodeWithSignature('initialize(address)', address(this));
+    InitializableImmutableAdminUpgradeabilityProxy proxy = InitializableImmutableAdminUpgradeabilityProxy(
+        proxyAddress
+      );
+    bytes memory params = abi.encodeWithSignature("initialize(address)", address(this));
 
     if (proxyAddress == address(0)) {
       proxy = new InitializableImmutableAdminUpgradeabilityProxy(address(this));

@@ -164,7 +164,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
       _usersConfig[msg.sender],
       _reservesList,
       _reservesCount,
-      _addressesProvider.getPriceOracle()
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
     );
 
     reserve.updateState();
@@ -254,8 +257,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
       variableDebt
     );
 
-    uint256 paybackAmount =
-      interestRateMode == DataTypes.InterestRateMode.STABLE ? stableDebt : variableDebt;
+    uint256 paybackAmount = interestRateMode == DataTypes.InterestRateMode.STABLE
+      ? stableDebt
+      : variableDebt;
 
     if (amount < paybackAmount) {
       paybackAmount = amount;
@@ -384,11 +388,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset deposited
    * @param useAsCollateral `true` if the user wants to use the deposit as collateral, `false` otherwise
    **/
-  function setUserUseReserveAsCollateral(address asset, bool useAsCollateral)
-    external
-    override
-    whenNotPaused
-  {
+  function setUserUseReserveAsCollateral(
+    address asset,
+    bool useAsCollateral
+  ) external override whenNotPaused {
     DataTypes.ReserveData storage reserve = _reserves[asset];
 
     ValidationLogic.validateSetUseReserveAsCollateral(
@@ -399,7 +402,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
       _usersConfig[msg.sender],
       _reservesList,
       _reservesCount,
-      _addressesProvider.getPriceOracle()
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
     );
 
     _usersConfig[msg.sender].setUsingAsCollateral(reserve.id, useAsCollateral);
@@ -432,17 +438,46 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
     address collateralManager = _addressesProvider.getLendingPoolCollateralManager();
 
     //solium-disable-next-line
-    (bool success, bytes memory result) =
-      collateralManager.delegatecall(
-        abi.encodeWithSignature(
-          'liquidationCall(address,address,address,uint256,bool)',
-          collateralAsset,
-          debtAsset,
-          user,
-          debtToCover,
-          receiveAToken
-        )
-      );
+    (bool success, bytes memory result) = collateralManager.delegatecall(
+      abi.encodeWithSignature(
+        'liquidationCall(address,address,address,uint256,bool)',
+        collateralAsset,
+        debtAsset,
+        user,
+        debtToCover,
+        receiveAToken
+      )
+    );
+
+    require(success, Errors.LP_LIQUIDATION_CALL_FAILED);
+
+    (uint256 returnCode, string memory returnMessage) = abi.decode(result, (uint256, string));
+
+    require(returnCode == 0, string(abi.encodePacked(returnMessage)));
+  }
+
+  function liquidateIthacaCollateral(
+    address user,
+    uint256 debtToCover,
+    address collateralAsset,
+    address debtAsset,
+    uint256 maxCollateralToLiquidate
+  ) external {
+    address collateralManager = _addressesProvider.getLendingPoolCollateralManager();
+    address receiver = _addressesProvider.getReceiverAccount();
+
+    //solium-disable-next-line
+    (bool success, bytes memory result) = collateralManager.delegatecall(
+      abi.encodeWithSignature(
+        'liquidateIthacaCollateral(address,uint256,address,address,uint256,address)',
+        user,
+        debtToCover,
+        collateralAsset,
+        debtAsset,
+        maxCollateralToLiquidate,
+        receiver
+      )
+    );
 
     require(success, Errors.LP_LIQUIDATION_CALL_FAILED);
 
@@ -568,12 +603,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @return The state of the reserve
    **/
-  function getReserveData(address asset)
-    external
-    view
-    override
-    returns (DataTypes.ReserveData memory)
-  {
+  function getReserveData(
+    address asset
+  ) external view override returns (DataTypes.ReserveData memory) {
     return _reserves[asset];
   }
 
@@ -587,7 +619,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @return ltv the loan to value of the user
    * @return healthFactor the current health factor of the user
    **/
-  function getUserAccountData(address user)
+  function getUserAccountData(
+    address user
+  )
     external
     view
     override
@@ -612,7 +646,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
       _usersConfig[user],
       _reservesList,
       _reservesCount,
-      _addressesProvider.getPriceOracle()
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
     );
 
     availableBorrowsETH = GenericLogic.calculateAvailableBorrowsETH(
@@ -627,12 +664,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @return The configuration of the reserve
    **/
-  function getConfiguration(address asset)
-    external
-    view
-    override
-    returns (DataTypes.ReserveConfigurationMap memory)
-  {
+  function getConfiguration(
+    address asset
+  ) external view override returns (DataTypes.ReserveConfigurationMap memory) {
     return _reserves[asset].configuration;
   }
 
@@ -641,12 +675,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param user The user address
    * @return The configuration of the user
    **/
-  function getUserConfiguration(address user)
-    external
-    view
-    override
-    returns (DataTypes.UserConfigurationMap memory)
-  {
+  function getUserConfiguration(
+    address user
+  ) external view override returns (DataTypes.UserConfigurationMap memory) {
     return _usersConfig[user];
   }
 
@@ -655,13 +686,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @return The reserve's normalized income
    */
-  function getReserveNormalizedIncome(address asset)
-    external
-    view
-    virtual
-    override
-    returns (uint256)
-  {
+  function getReserveNormalizedIncome(
+    address asset
+  ) external view virtual override returns (uint256) {
     return _reserves[asset].getNormalizedIncome();
   }
 
@@ -670,12 +697,9 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @return The reserve normalized variable debt
    */
-  function getReserveNormalizedVariableDebt(address asset)
-    external
-    view
-    override
-    returns (uint256)
-  {
+  function getReserveNormalizedVariableDebt(
+    address asset
+  ) external view override returns (uint256) {
     return _reserves[asset].getNormalizedDebt();
   }
 
@@ -713,7 +737,7 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
   }
 
   /**
-   * @dev Returns the fee on flash loans 
+   * @dev Returns the fee on flash loans
    */
   function FLASHLOAN_PREMIUM_TOTAL() public view returns (uint256) {
     return _flashLoanPremiumTotal;
@@ -752,7 +776,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
       _usersConfig[from],
       _reservesList,
       _reservesCount,
-      _addressesProvider.getPriceOracle()
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
     );
 
     uint256 reserveId = _reserves[asset].id;
@@ -805,11 +832,10 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @param rateStrategyAddress The address of the interest rate strategy contract
    **/
-  function setReserveInterestRateStrategyAddress(address asset, address rateStrategyAddress)
-    external
-    override
-    onlyLendingPoolConfigurator
-  {
+  function setReserveInterestRateStrategyAddress(
+    address asset,
+    address rateStrategyAddress
+  ) external override onlyLendingPoolConfigurator {
     _reserves[asset].interestRateStrategyAddress = rateStrategyAddress;
   }
 
@@ -819,12 +845,19 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
    * @param asset The address of the underlying asset of the reserve
    * @param configuration The new configuration bitmap
    **/
-  function setConfiguration(address asset, uint256 configuration)
-    external
-    override
-    onlyLendingPoolConfigurator
-  {
+  function setConfiguration(
+    address asset,
+    uint256 configuration
+  ) external override onlyLendingPoolConfigurator {
     _reserves[asset].configuration.data = configuration;
+  }
+
+  function setUsingIthacaCollateral(bool isUsingAsCollateral) public {
+    _usersConfig[msg.sender].setUsingAsCollateral(0, isUsingAsCollateral);
+  }
+
+  function isUsingIthacaCollateral() public view returns (bool) {
+    return _usersConfig[msg.sender].isUsingAsCollateral(0);
   }
 
   /**
@@ -857,25 +890,27 @@ contract LendingPool is VersionedInitializable, ILendingPool, LendingPoolStorage
     DataTypes.UserConfigurationMap storage userConfig = _usersConfig[vars.onBehalfOf];
 
     address oracle = _addressesProvider.getPriceOracle();
+    address ithacaFeed = _addressesProvider.getIthacaFeedOracle();
 
-    uint256 amountInETH =
-      IPriceOracleGetter(oracle).getAssetPrice(vars.asset).mul(vars.amount).div(
-        10**reserve.configuration.getDecimals()
-      );
+    uint256 amountInETH = IPriceOracleGetter(oracle).getAssetPrice(vars.asset).mul(vars.amount).div(
+      10 ** reserve.configuration.getDecimals()
+    );
 
     ValidationLogic.validateBorrow(
       vars.asset,
       reserve,
-      vars.onBehalfOf,
-      vars.amount,
-      amountInETH,
-      vars.interestRateMode,
-      _maxStableRateBorrowSizePercent,
+      ValidationLogic.BorrowParams(
+        vars.onBehalfOf,
+        vars.amount,
+        amountInETH,
+        vars.interestRateMode,
+        _maxStableRateBorrowSizePercent
+      ),
       _reserves,
       userConfig,
       _reservesList,
       _reservesCount,
-      oracle
+      GenericLogic.Feeds(oracle, ithacaFeed)
     );
 
     reserve.updateState();

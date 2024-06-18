@@ -17,8 +17,10 @@ interface ILendingPoolAddressesProvider {
   event LendingPoolCollateralManagerUpdated(address indexed newAddress);
   event PriceOracleUpdated(address indexed newAddress);
   event LendingRateOracleUpdated(address indexed newAddress);
+  event IthacaFeedOracleUpdated(address indexed newAddress);
   event ProxyCreated(bytes32 id, address indexed newAddress);
   event AddressSet(bytes32 id, address indexed newAddress, bool hasProxy);
+  event ReceiverUpdated(address indexed newAddress);
 
   function getMarketId() external view returns (string memory);
 
@@ -57,4 +59,12 @@ interface ILendingPoolAddressesProvider {
   function getLendingRateOracle() external view returns (address);
 
   function setLendingRateOracle(address lendingRateOracle) external;
+
+  function getIthacaFeedOracle() external view returns (address);
+
+  function setIthacaFeedOracle(address ithacaFeed) external;
+
+  function getReceiverAccount() external view returns (address);
+
+  function setReceiverAccount(address receiver) external;
 }

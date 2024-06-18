@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: agpl-3.0
 pragma solidity 0.6.12;
+pragma experimental ABIEncoderV2;
 
-import {SafeMath} from '../../dependencies/openzeppelin/contracts//SafeMath.sol';
-import {IERC20} from '../../dependencies/openzeppelin/contracts//IERC20.sol';
-import {IAToken} from '../../interfaces/IAToken.sol';
-import {IStableDebtToken} from '../../interfaces/IStableDebtToken.sol';
-import {IVariableDebtToken} from '../../interfaces/IVariableDebtToken.sol';
-import {IPriceOracleGetter} from '../../interfaces/IPriceOracleGetter.sol';
-import {ILendingPoolCollateralManager} from '../../interfaces/ILendingPoolCollateralManager.sol';
-import {VersionedInitializable} from '../libraries/aave-upgradeability/VersionedInitializable.sol';
-import {GenericLogic} from '../libraries/logic/GenericLogic.sol';
-import {Helpers} from '../libraries/helpers/Helpers.sol';
-import {WadRayMath} from '../libraries/math/WadRayMath.sol';
-import {PercentageMath} from '../libraries/math/PercentageMath.sol';
-import {SafeERC20} from '../../dependencies/openzeppelin/contracts/SafeERC20.sol';
-import {Errors} from '../libraries/helpers/Errors.sol';
-import {ValidationLogic} from '../libraries/logic/ValidationLogic.sol';
-import {DataTypes} from '../libraries/types/DataTypes.sol';
-import {LendingPoolStorage} from './LendingPoolStorage.sol';
+import {SafeMath} from "../../dependencies/openzeppelin/contracts//SafeMath.sol";
+import {IERC20} from "../../dependencies/openzeppelin/contracts//IERC20.sol";
+import {IAToken} from "../../interfaces/IAToken.sol";
+import {IStableDebtToken} from "../../interfaces/IStableDebtToken.sol";
+import {IVariableDebtToken} from "../../interfaces/IVariableDebtToken.sol";
+import {IPriceOracleGetter} from "../../interfaces/IPriceOracleGetter.sol";
+import {ILendingPoolCollateralManager} from "../../interfaces/ILendingPoolCollateralManager.sol";
+import {VersionedInitializable} from "../libraries/aave-upgradeability/VersionedInitializable.sol";
+import {GenericLogic} from "../libraries/logic/GenericLogic.sol";
+import {Helpers} from "../libraries/helpers/Helpers.sol";
+import {WadRayMath} from "../libraries/math/WadRayMath.sol";
+import {PercentageMath} from "../libraries/math/PercentageMath.sol";
+import {SafeERC20} from "../../dependencies/openzeppelin/contracts/SafeERC20.sol";
+import {Errors} from "../libraries/helpers/Errors.sol";
+import {ValidationLogic} from "../libraries/logic/ValidationLogic.sol";
+import {DataTypes} from "../libraries/types/DataTypes.sol";
+import {LendingPoolStorage} from "./LendingPoolStorage.sol";
+import {IIthacaFeed} from "../ithaca/IIthacaFeed.sol";
 
 /**
  * @title LendingPoolCollateralManager contract
@@ -67,6 +69,122 @@ contract LendingPoolCollateralManager is
     return 0;
   }
 
+  function liquidateIthacaCollateral(
+    address user,
+    uint256 debtToCover,
+    address collateralAsset,
+    address debtAsset,
+    uint256 maxCollateralToLiquidate,
+    address receiver
+  ) external override returns (uint256, string memory) {
+    address ithacaAsset = _reservesList[0];
+    DataTypes.ReserveData storage ithacaReserve = _reserves[ithacaAsset];
+    DataTypes.ReserveData storage debtReserve = _reserves[debtAsset];
+    DataTypes.UserConfigurationMap storage userConfig = _usersConfig[user];
+
+    LiquidationCallLocalVars memory vars;
+
+    (, , , , vars.healthFactor) = GenericLogic.calculateUserAccountData(
+      user,
+      _reserves,
+      userConfig,
+      _reservesList,
+      _reservesCount,
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
+    );
+
+    (vars.userStableDebt, vars.userVariableDebt) = Helpers.getUserCurrentDebt(user, debtReserve);
+
+    (vars.errorCode, vars.errorMsg) = ValidationLogic.validateLiquidationCall(
+      ithacaReserve,
+      debtReserve,
+      userConfig,
+      vars.healthFactor,
+      vars.userStableDebt,
+      vars.userVariableDebt
+    );
+
+    if (Errors.CollateralManagerErrors(vars.errorCode) != Errors.CollateralManagerErrors.NO_ERROR) {
+      return (vars.errorCode, vars.errorMsg);
+    }
+
+    vars.actualDebtToLiquidate = debtToCover;
+
+    (
+      vars.maxCollateralToLiquidate,
+      vars.debtAmountNeeded
+    ) = _calculateAvailableCollateralToLiquidate(
+      ithacaReserve,
+      debtReserve,
+      ithacaAsset,
+      debtAsset,
+      vars.actualDebtToLiquidate,
+      maxCollateralToLiquidate
+    );
+
+    // If debtAmountNeeded < actualDebtToLiquidate, there isn't enough
+    // collateral to cover the actual amount that is being liquidated, hence we liquidate
+    // a smaller amount
+
+    if (vars.debtAmountNeeded < vars.actualDebtToLiquidate) {
+      vars.actualDebtToLiquidate = vars.debtAmountNeeded;
+    }
+
+    debtReserve.updateState();
+
+    if (vars.userVariableDebt >= vars.actualDebtToLiquidate) {
+      IVariableDebtToken(debtReserve.variableDebtTokenAddress).burn(
+        user,
+        vars.actualDebtToLiquidate,
+        debtReserve.variableBorrowIndex
+      );
+    } else {
+      // If the user doesn't have variable debt, no need to try to burn variable debt tokens
+      if (vars.userVariableDebt > 0) {
+        IVariableDebtToken(debtReserve.variableDebtTokenAddress).burn(
+          user,
+          vars.userVariableDebt,
+          debtReserve.variableBorrowIndex
+        );
+      }
+      IStableDebtToken(debtReserve.stableDebtTokenAddress).burn(
+        user,
+        vars.actualDebtToLiquidate.sub(vars.userVariableDebt)
+      );
+    }
+
+    debtReserve.updateInterestRates(
+      debtAsset,
+      debtReserve.aTokenAddress,
+      vars.actualDebtToLiquidate,
+      0
+    );
+
+    require(
+      IERC20(collateralAsset).allowance(msg.sender, address(this)) >= vars.maxCollateralToLiquidate,
+      Errors.FL_NOT_ENOUGH_ALLOWANCE
+    );
+
+    // transfer collateral to liquidator
+    // fundlock will initiate this, it will be transfered to a default address
+    IERC20(collateralAsset).transferFrom(msg.sender, receiver, vars.maxCollateralToLiquidate);
+
+    emit LiquidateIthacaCollateral(
+      collateralAsset,
+      debtAsset,
+      user,
+      vars.actualDebtToLiquidate,
+      vars.maxCollateralToLiquidate,
+      msg.sender,
+      receiver
+    );
+
+    return (uint256(Errors.CollateralManagerErrors.NO_ERROR), Errors.LPCM_NO_ERRORS);
+  }
+
   /**
    * @dev Function to liquidate a position if its Health Factor drops below 1
    * - The caller (liquidator) covers `debtToCover` amount of debt of the user getting liquidated, and receives
@@ -89,6 +207,12 @@ contract LendingPoolCollateralManager is
     DataTypes.ReserveData storage debtReserve = _reserves[debtAsset];
     DataTypes.UserConfigurationMap storage userConfig = _usersConfig[user];
 
+    // can't liquidate portfolio collateral
+    require(
+      debtReserve.id != 0 && collateralReserve.id != 0,
+      Errors.LPCM_ITHACA_NOT_DEBT_COLLATERAL
+    );
+
     LiquidationCallLocalVars memory vars;
 
     (, , , , vars.healthFactor) = GenericLogic.calculateUserAccountData(
@@ -97,7 +221,10 @@ contract LendingPoolCollateralManager is
       userConfig,
       _reservesList,
       _reservesCount,
-      _addressesProvider.getPriceOracle()
+      GenericLogic.Feeds(
+        _addressesProvider.getPriceOracle(),
+        _addressesProvider.getIthacaFeedOracle()
+      )
     );
 
     (vars.userStableDebt, vars.userVariableDebt) = Helpers.getUserCurrentDebt(user, debtReserve);
@@ -150,8 +277,9 @@ contract LendingPoolCollateralManager is
     // If the liquidator reclaims the underlying asset, we make sure there is enough available liquidity in the
     // collateral reserve
     if (!receiveAToken) {
-      uint256 currentAvailableCollateral =
-        IERC20(collateralAsset).balanceOf(address(vars.collateralAtoken));
+      uint256 currentAvailableCollateral = IERC20(collateralAsset).balanceOf(
+        address(vars.collateralAtoken)
+      );
       if (currentAvailableCollateral < vars.maxCollateralToLiquidate) {
         return (
           uint256(Errors.CollateralManagerErrors.NOT_ENOUGH_LIQUIDITY),
@@ -296,17 +424,17 @@ contract LendingPoolCollateralManager is
     vars.maxAmountCollateralToLiquidate = vars
       .debtAssetPrice
       .mul(debtToCover)
-      .mul(10**vars.collateralDecimals)
+      .mul(10 ** vars.collateralDecimals)
       .percentMul(vars.liquidationBonus)
-      .div(vars.collateralPrice.mul(10**vars.debtAssetDecimals));
+      .div(vars.collateralPrice.mul(10 ** vars.debtAssetDecimals));
 
     if (vars.maxAmountCollateralToLiquidate > userCollateralBalance) {
       collateralAmount = userCollateralBalance;
       debtAmountNeeded = vars
         .collateralPrice
         .mul(collateralAmount)
-        .mul(10**vars.debtAssetDecimals)
-        .div(vars.debtAssetPrice.mul(10**vars.collateralDecimals))
+        .mul(10 ** vars.debtAssetDecimals)
+        .div(vars.debtAssetPrice.mul(10 ** vars.collateralDecimals))
         .percentDiv(vars.liquidationBonus);
     } else {
       collateralAmount = vars.maxAmountCollateralToLiquidate;

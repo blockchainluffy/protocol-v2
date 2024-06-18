@@ -13,9 +13,9 @@ export enum eEthereumNetwork {
   main = 'main',
   coverage = 'coverage',
   hardhat = 'hardhat',
-
+  arb = 'arb',
   tenderly = 'tenderly',
-  goerli = 'goerli',
+  goerli = 'goerli'
 }
 
 export enum ePolygonNetwork {
@@ -41,6 +41,7 @@ export enum EthereumNetworkNames {
   xdai = 'xdai',
   avalanche = 'avalanche',
   fuji = 'fuji',
+  arb= 'arb-sepolia',
 }
 
 export enum AavePools {
@@ -104,6 +105,7 @@ export enum eContractid {
   ParaSwapLiquiditySwapAdapter = 'ParaSwapLiquiditySwapAdapter',
   UiIncentiveDataProviderV2V3 = 'UiIncentiveDataProviderV2V3',
   UiIncentiveDataProviderV2 = 'UiIncentiveDataProviderV2',
+  IthacaFeed = 'MockIthacaFeed',
 }
 
 /*
@@ -216,6 +218,7 @@ export interface iAssetCommon<T> {
   [key: string]: T;
 }
 export interface iAssetBase<T> {
+  ITH: T;
   WETH: T;
   DAI: T;
   TUSD: T;
@@ -265,6 +268,7 @@ export type iAssetsWithoutUSD<T> = Omit<iAssetBase<T>, 'USD'>;
 
 export type iAavePoolAssets<T> = Pick<
   iAssetsWithoutUSD<T>,
+  | 'ITH'
   | 'DAI'
   | 'TUSD'
   | 'USDC'
@@ -335,6 +339,7 @@ export type iAavePoolTokens<T> = Omit<iAavePoolAssets<T>, 'ETH'>;
 export type iAssetAggregatorBase<T> = iAssetsWithoutETH<T>;
 
 export enum TokenContractId {
+  ITH = 'ITH',
   DAI = 'DAI',
   AAVE = 'AAVE',
   TUSD = 'TUSD',
@@ -435,6 +440,7 @@ export interface iEthereumParamsPerNetwork<T> {
   [eEthereumNetwork.hardhat]: T;
   [eEthereumNetwork.tenderly]: T;
   [eEthereumNetwork.goerli]: T;
+  [eEthereumNetwork.arb]: T;
 }
 
 export interface iPolygonParamsPerNetwork<T> {
